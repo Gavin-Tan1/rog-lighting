@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from rog_lighting import config, devices  # noqa: E402
+
+USAGE = """ROG Lighting: keyboard backlight and Slash control for ASUS ROG laptops on Linux.
+
+Usage:
+  rog-lighting                        open the window
+  rog-lighting status                 show detected devices and access
+  rog-lighting kbd 0..3               set keyboard brightness
+  rog-lighting slash on|off           turn the Slash bar on/off (uses saved mode/brightness)
+  rog-lighting apply                  push saved settings to the hardware
+  rog-lighting daemon [--debug-keys]  background helper for Fn+F2/F3
+"""
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "gui"
+
+    if cmd == "gui":
+        from rog_lighting import gui
+        return gui.main()
+
+    if cmd == "daemon":
+        from rog_lighting.daemon import Daemon
+        return Daemon(debug_keys="--debug-keys" in argv).run()
+
+    if cmd == "status":
+        for dev in (devices.Keyboard(), devices.Slash()):
+            state = "not found" if not dev.present else (
+                "ok" if dev.accessible else "found, but no permission (run install.sh)")
+            print(f"{dev.NAME:15} {dev.path or '-':14} {state}")
+        return 0
+
+    cfg = config.load()
+    try:
+        if cmd == "kbd" and len(argv) == 3 and argv[2] in ("0", "1", "2", "3"):
+            cfg["keyboard"]["brightness"] = int(argv[2])
+            devices.Keyboard().set_brightness(cfg["keyboard"]["brightness"])
+        elif cmd == "slash" and len(argv) == 3 and argv[2] in ("on", "off"):
+            cfg["slash"]["enabled"] = argv[2] == "on"
+            s = cfg["slash"]
+            devices.Slash().apply(s["enabled"], s["mode"], s["brightness"], s["interval"])
+        elif cmd == "apply":
+            errors = devices.apply_settings(cfg)
+            for e in errors:
+                print(e, file=sys.stderr)
+            return 1 if errors else 0
+        else:
+            print(USAGE)
+            return 0 if cmd in ("-h", "--help", "help") else 2
+    except devices.DeviceError as e:
+        print(e, file=sys.stderr)
+        return 1
+    config.save(cfg)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
